@@ -1,0 +1,161 @@
+---
+title: "Practicial Machine Learning - Course Project"
+author: "Augustin Jossa"
+date: "6 novembre 2015"
+output: html_document
+---
+
+##Synopsis
+The goal of this project is to predict the manner in which people in the test database did the exercise. 
+<br/>
+
+In this report we created a model based on random forest algorythm to evaluate which variables enable us to know how the exercice was done. We then used cross validation to check its accuracy. This model is 98% accurate and its expected sample error is equal to 0.019.
+<br/>
+<br/>
+We then tested it on the test data base. Here are our results : B A C A A B D B A A B C B A E E A B B B.
+
+
+####The data
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). 
+
+
+####The study
+In this project, we will use **data from accelerometers** on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. <br/>
+
+The goal of this study is to predict the manner in which the studied people did the exercise. We will thus focus on the "classe" variable.
+
+####Copyrights
+The data for this project comes from http://groupware.les.inf.puc-rio.br/har.
+We thank them for having been very generous in allowing their data to be used for this study. 
+
+##Load the data
+```{r, echo=TRUE}
+#Set your working directory
+setwd("/Users/augustinjossa/Desktop/MOOC/Programming_assignment/Machine/")
+
+
+#Download the data
+if(!file.exists("pml-training")){download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", destfile = "pml-training")}
+
+if(!file.exists("pml-testing")){download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", destfile = "pml-testing")}
+
+
+#Read the training data
+DT<- read.csv("./pml-training", sep=",", header=TRUE, na.strings = c("NA",""))
+DT2<- read.csv("./pml-testing", sep=",", header=TRUE, na.strings = c("NA",""))
+
+```
+
+##Clean the data
+
+First, we remove columns with missing values, and those who won't be needed for our analysis.
+```{r, echo=TRUE}
+out <- DT[,(colSums(is.na(DT)) == 0)]
+out2 <- DT2[, (colSums(is.na(DT2)) == 0)] 
+outcol <- c("X","user_name","raw_timestamp_part_1","raw_timestamp_part_2","cvtd_timestamp","new_window")
+
+DT_clean<- out[,!(names(out) %in% outcol)]
+DT2_clean <- out2[,!(names(out2) %in% outcol)]
+dim(DT_clean)
+dim(DT2_clean)
+```
+
+We have two new data frames with 19622 observations of 54 variables.
+
+##Split the data
+We want a 70% observation training dataset to train our model. We will then test it on the last 30%.
+
+```{r, echo=TRUE}
+library(lattice)
+library(ggplot2)
+library(caret)
+
+set.seed(22519) # For reproducibile purpose
+inTrain<- createDataPartition(DT_clean$classe, p=0.70, list=FALSE)
+training<- DT_clean[inTrain, ]
+testing<- DT_clean[-inTrain, ]
+dim(training) ; dim(testing)
+```
+
+We now have a training and a testing database containing 54 variables.Let's see the correlations between theses variables.
+
+##Study the correlations between the different variables
+
+```{r, echo=TRUE, fig.width = 8, fig.height = 8}
+library(corrplot)
+corMatrix<- cor(training[, -54])
+
+corrplot(corMatrix, order = "FPC", method = "color", type = "lower", tl.cex = 0.6, tl.col = rgb(0, 0, 0))
+
+```
+
+This graph shows how our columns are correlated. We now use this graph to set a model with uncorrelated variables as our predictors, to increase our accuracy.
+
+##Modelisation
+We are going to use a random forest algorythm for 4 main reasons : <br/>
+
+- It deals automatically with non linearity
+- It builds a large number of tree, and thus select more accurate variables
+- It eliminates a distinct validation stage, doing it at the same time
+- It deals well with outliers variables
+
+####Pre-process
+We pre-process our data using a principal component analysis, leaving out the last column "classe". We then apply the pre-processing to both our training and validation subsets.
+
+```{r, echo=TRUE}
+library(randomForest)
+preProc <- preProcess(training[, -54], method = "pca", thresh = 0.99)
+training_preprocess <- predict(preProc, training[, -54])
+testing_preprocess <- predict(preProc, testing[, -54])
+```
+
+####Model
+
+```{r, echo=TRUE}
+library(randomForest)
+modFitrf <- train(training$classe ~ ., method = "rf", data = training_preprocess, trControl = trainControl(method = "cv", number = 5), importance = TRUE)
+modFitrf
+```
+
+####Interpretation
+
+Let's plot the importance of each individual variable
+
+```{r, echo=TRUE, fig.width = 6, fig.height = 6}
+varImpPlot(modFitrf$finalModel, sort = TRUE, type = 1, pch = 19, col = 1, cex = 0.6, main = "Importance of the Individual Principal Components")
+```
+
+This plot shows each of the principal components in order from most important to least important.
+
+##Cross Validation Testing and Out-of-Sample Error Estimate
+
+Let's apply our training model on our testing database, to check its accuracy. 
+
+#### Accuracy and Estimated out of sample error
+```{r, echo=TRUE}
+predValidRF <- predict(modFitrf, testing_preprocess)
+confus <- confusionMatrix(testing$classe, predValidRF)
+confus$table
+```
+We can notice that there are very few variables out of this model.
+
+```{r, echo=TRUE}
+accur <- postResample(testing$classe, predValidRF)
+modAccuracy <- accur[[1]]
+modAccuracy
+
+out_of_sample_error <- 1 - modAccuracy
+out_of_sample_error
+```
+
+The estimated accuracy of the model is 98% and the estimated out-of-sample error based on our fitted model applied to the cross validation dataset is 1.9%.
+
+##Application of this model on the 20 test cases provided
+We have already clean the test data base (DT2_clean). We delete the "problem id" column as it is useless for our analysis.
+```{r, echo=TRUE}
+test <- predict(preProc, DT2_clean[, -54])
+pred_final <- predict(modFitrf, test)
+pred_final
+```
+
+Here are our results, we will use them for the submission of this course project in the coursera platform.
